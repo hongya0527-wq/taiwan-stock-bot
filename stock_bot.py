@@ -2,9 +2,9 @@ import os
 from datetime import datetime
 import requests
 
-# === 你的全新機器人與聊天設定 ===
-TELEGRAM_BOT_TOKEN = "8924824456:AAGI1KwdUqihOktG-OIR08CVmIdtc-krX-4"
-TELEGRAM_CHAT_ID = "6273931436"
+# === 從 GitHub Secrets 安全讀取設定 ===
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 # 核心熱門概念股對應字典
 CONCEPT_DICT = {

@@ -1,0 +1,28 @@
+name: Run Stock Bot Daily
+
+on:
+  schedule:
+    # 台灣時間每天 12:45 執行 (UTC 時間 4:45)
+    - cron: '45 4 * * 1-5'
+  workflow_dispatch: # 讓你可以手動按按鈕測試
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run bot script
+        run: |
+          python stock_bot.py

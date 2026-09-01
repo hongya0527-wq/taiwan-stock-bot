@@ -1,3 +1,5 @@
-requests
+twstock
+yfinance
 pandas
-akshare
+requests
+urllib3

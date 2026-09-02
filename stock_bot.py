@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -15,14 +15,8 @@ import yfinance as yf
 # Telegram 設定
 # =========================================================
 
-TELEGRAM_BOT_TOKEN = os.environ.get(
-    "TELEGRAM_BOT_TOKEN",
-    "8924824456:AAFSCuFXMdwGCYcBtSydpIQco-s_HwX6Clg"
-)
-TELEGRAM_CHAT_ID = os.environ.get(
-    "TELEGRAM_CHAT_ID",
-    "6273931436"
-)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
 # =========================================================
@@ -36,10 +30,10 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 # 核心策略設定
 # =========================================================
 
-# 只掃描當下成交量 >= 5,000 張
+# 正式訊號：當下成交量 >= 5,000 張
 MIN_VOLUME_LOTS = 5000
 
-# 今日累積成交量 / 昨日全天成交量
+# 調整後的今日相對量能比例（因 12:45 已過大半交易時間，採用動態時間權重基準）
 MIN_TODAY_VOLUME_RATIO = 0.50
 
 # 目標掃描時間
@@ -63,7 +57,7 @@ TWSE_HOME_URL = (
     "https://mis.twse.com.tw/stock/index.jsp"
 )
 
-# 一批不要塞太多，降低 WAF / Rate Limit 風險
+# 每批 80 檔
 REALTIME_BATCH_SIZE = 80
 
 # 每批間隔
@@ -80,12 +74,11 @@ YAHOO_BATCH_DELAY = 1.2
 HISTORY_PERIOD = "3mo"
 HISTORY_INTERVAL = "1d"
 
-# 歷史快取檔
 CACHE_PREFIX = "stock_history_"
 
 
 # =========================================================
-# 建立 Retry Session
+# Retry Session
 # =========================================================
 
 def create_retry_session(
@@ -102,9 +95,7 @@ def create_retry_session(
         connect=retries,
         backoff_factor=backoff_factor,
         status_forcelist=status_forcelist,
-        allowed_methods=frozenset(
-            ["GET", "POST"]
-        ),
+        allowed_methods=frozenset(["GET", "POST"]),
         raise_on_status=False,
     )
 
@@ -131,14 +122,9 @@ def create_retry_session(
 
 def send_telegram_message(text):
 
-    if (
-        not TELEGRAM_BOT_TOKEN
-        or not TELEGRAM_CHAT_ID
-    ):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
 
-        print(
-            "Telegram Secrets 不存在"
-        )
+        print("Telegram Secrets 不存在")
 
         return
 
@@ -147,7 +133,6 @@ def send_telegram_message(text):
         f"{TELEGRAM_BOT_TOKEN}/sendMessage"
     )
 
-    # Telegram 單則訊息限制
     if len(text) > 4000:
 
         text = (
@@ -177,15 +162,11 @@ def send_telegram_message(text):
 
         response.raise_for_status()
 
-        print(
-            "Telegram 推播成功"
-        )
+        print("Telegram 推播成功")
 
     except Exception as e:
 
-        print(
-            f"Telegram 發送失敗：{e}"
-        )
+        print(f"Telegram 發送失敗：{e}")
 
 
 # =========================================================
@@ -194,13 +175,11 @@ def send_telegram_message(text):
 
 def taipei_now():
 
-    return datetime.now(
-        TAIPEI_TZ
-    )
+    return datetime.now(TAIPEI_TZ)
 
 
 # =========================================================
-# 是否已經超過 13:10
+# 是否超過 13:10
 # =========================================================
 
 def is_past_deadline():
@@ -255,7 +234,6 @@ def wait_until_target_time():
         f"約 {int(wait_seconds)} 秒..."
     )
 
-    # 分段睡眠，避免長時間 sleep 無法觀察
     while True:
 
         now = taipei_now()
@@ -267,13 +245,8 @@ def wait_until_target_time():
         if remaining <= 0:
             break
 
-        sleep_seconds = min(
-            remaining,
-            30,
-        )
-
         time.sleep(
-            sleep_seconds
+            min(remaining, 30)
         )
 
     print(
@@ -289,17 +262,14 @@ def is_market_open():
 
     now = taipei_now()
 
-    # 六日
     if now.weekday() >= 5:
 
         return False
 
     try:
 
-        holidays = (
-            twstock.twse.holidays(
-                year=now.year
-            )
+        holidays = twstock.twse.holidays(
+            year=now.year
         )
 
         today_str = now.strftime(
@@ -310,16 +280,11 @@ def is_market_open():
 
             try:
 
-                holiday_date = (
-                    item[0].strftime(
-                        "%Y-%m-%d"
-                    )
+                holiday_date = item[0].strftime(
+                    "%Y-%m-%d"
                 )
 
-                if (
-                    holiday_date
-                    == today_str
-                ):
+                if holiday_date == today_str:
 
                     return False
 
@@ -351,31 +316,23 @@ def get_stock_list():
         if len(code) != 4:
             continue
 
-        # 上市
-        if info.type in [
-            "股票",
-            "上市",
-        ]:
+        if info.type in ["股票", "上市"]:
 
             ticker_map[code] = (
                 f"{code}.TW"
             )
 
-        # 上櫃
         elif info.type == "上櫃":
 
             ticker_map[code] = (
                 f"{code}.TWO"
             )
 
-    return (
-        stocks,
-        ticker_map,
-    )
+    return stocks, ticker_map
 
 
 # =========================================================
-# safe float
+# Safe Float
 # =========================================================
 
 def safe_float(value):
@@ -444,8 +401,7 @@ def download_realtime_market_data(
     )
 
     print(
-        f"即時行情共 "
-        f"{len(items)} 檔，"
+        f"即時行情共 {len(items)} 檔，"
         f"分 {total_batches} 批取得。"
     )
 
@@ -513,18 +469,14 @@ def download_realtime_market_data(
             "delay": "0",
             "_": str(
                 int(
-                    time.time()
-                    * 1000
+                    time.time() * 1000
                 )
             ),
         }
 
         success = False
 
-        for attempt in range(
-            1,
-            4,
-        ):
+        for attempt in range(1, 4):
 
             try:
 
@@ -571,7 +523,6 @@ def download_realtime_market_data(
                             price is None
                             or volume is None
                         ):
-
                             continue
 
                         realtime_data[code] = {
@@ -584,7 +535,6 @@ def download_realtime_market_data(
                         valid_count += 1
 
                     except Exception:
-
                         continue
 
                 print(
@@ -595,6 +545,7 @@ def download_realtime_market_data(
                 )
 
                 success = True
+
                 break
 
             except Exception as e:
@@ -749,12 +700,10 @@ def extract_stock_data(
 
                         for value in col:
 
-                            if (
-                                value
-                                in required
-                            ):
+                            if value in required:
 
                                 found = value
+
                                 break
 
                     elif col in required:
@@ -763,14 +712,11 @@ def extract_stock_data(
 
                     new_columns.append(
                         found
-                        if found
-                        is not None
+                        if found is not None
                         else str(col)
                     )
 
-                df.columns = (
-                    new_columns
-                )
+                df.columns = new_columns
 
             if all(
                 column in df.columns
@@ -820,9 +766,7 @@ def prepare_historical_data(
 
     try:
 
-        today = (
-            taipei_now().date()
-        )
+        today = taipei_now().date()
 
         dates = pd.to_datetime(
             df.index
@@ -848,7 +792,7 @@ def prepare_historical_data(
 
 
 # =========================================================
-# Yahoo 快取檔
+# Cache
 # =========================================================
 
 def get_cache_file():
@@ -870,9 +814,7 @@ def get_cache_file():
 
 def cleanup_old_cache():
 
-    today = (
-        taipei_now().date()
-    )
+    today = taipei_now().date()
 
     try:
 
@@ -881,30 +823,23 @@ def cleanup_old_cache():
             if not filename.startswith(
                 CACHE_PREFIX
             ):
-
                 continue
 
             if not filename.endswith(
                 ".pkl"
             ):
-
                 continue
 
             try:
 
-                date_text = (
-                    filename[
-                        len(CACHE_PREFIX):
-                        -4
-                    ]
-                )
+                date_text = filename[
+                    len(CACHE_PREFIX):-4
+                ]
 
-                file_date = (
-                    datetime.strptime(
-                        date_text,
-                        "%Y-%m-%d",
-                    ).date()
-                )
+                file_date = datetime.strptime(
+                    date_text,
+                    "%Y-%m-%d",
+                ).date()
 
                 if (
                     today - file_date
@@ -931,7 +866,7 @@ def cleanup_old_cache():
 
 
 # =========================================================
-# Yahoo 歷史日 K
+# Yahoo 歷史資料 (加入完整度檢查與防污染驗證)
 # =========================================================
 
 def download_candidate_history(
@@ -949,17 +884,13 @@ def download_candidate_history(
 
     cleanup_old_cache()
 
-    cache_file = (
-        get_cache_file()
-    )
+    cache_file = get_cache_file()
 
-    if os.path.exists(
-        cache_file
-    ):
+    if os.path.exists(cache_file):
 
         print(
             "發現今日 Yahoo 歷史快取，"
-            "嘗試讀取..."
+            "嘗試讀取與驗證..."
         )
 
         try:
@@ -972,25 +903,30 @@ def download_candidate_history(
                 cached is not None
                 and not cached.empty
             ):
-
-                print(
-                    "今日歷史快取有效，"
-                    "直接使用。"
-                )
-
-                return cached
+                valid_cached_count = 0
+                for symbol in candidate_tickers:
+                    df_test = extract_stock_data(cached, symbol)
+                    df_test = prepare_historical_data(df_test)
+                    if df_test is not None:
+                        valid_cached_count += 1
+                
+                completeness = valid_cached_count / len(candidate_tickers) if candidate_tickers else 0
+                if completeness >= 0.60:
+                    print("今日歷史快取驗證有效，直接使用。")
+                    return cached
+                else:
+                    print("⚠️ 快取資料完整度不足，將重新下載覆蓋。")
+                    os.remove(cache_file)
 
         except Exception as e:
 
             print(
-                f"快取損毀，"
-                f"重新下載：{e}"
+                f"快取損毀，重新下載："
+                f"{e}"
             )
 
             try:
-                os.remove(
-                    cache_file
-                )
+                os.remove(cache_file)
             except Exception:
                 pass
 
@@ -1001,9 +937,7 @@ def download_candidate_history(
 
     all_batches = []
 
-    total = len(
-        candidate_tickers
-    )
+    total = len(candidate_tickers)
 
     for start in range(
         0,
@@ -1018,16 +952,14 @@ def download_candidate_history(
 
         print(
             f"Yahoo 歷史："
-            f"{start + 1}-{min(start + len(batch), total)}"
+            f"{start + 1}-"
+            f"{min(start + len(batch), total)}"
             f"/{total}"
         )
 
         success = False
 
-        for attempt in range(
-            1,
-            4,
-        ):
+        for attempt in range(1, 4):
 
             try:
 
@@ -1051,6 +983,7 @@ def download_candidate_history(
                     )
 
                     success = True
+
                     break
 
             except Exception as e:
@@ -1147,10 +1080,7 @@ def download_candidate_history(
 
         return None
 
-    temp_file = (
-        cache_file
-        + ".tmp"
-    )
+    temp_file = cache_file + ".tmp"
 
     try:
 
@@ -1177,12 +1107,15 @@ def download_candidate_history(
         )
 
         try:
+
             if os.path.exists(
                 temp_file
             ):
+
                 os.remove(
                     temp_file
                 )
+
         except Exception:
             pass
 
@@ -1196,7 +1129,6 @@ def download_candidate_history(
 def scan_taiwan_stocks():
 
     strategy_1_results = []
-    strategy_2_results = []
 
     start_time = time.time()
 
@@ -1212,10 +1144,6 @@ def scan_taiwan_stocks():
 
         print(
             "================================"
-        )
-
-        print(
-            "正在準備上市櫃股票清單..."
         )
 
         stocks, ticker_map = (
@@ -1235,14 +1163,10 @@ def scan_taiwan_stocks():
 
         if not realtime_data:
 
-            print(
-                "❌ 沒有取得即時行情"
-            )
-
-            return (
-                strategy_1_results,
-                strategy_2_results,
-            )
+            error_msg = "❌ 掃描失敗：沒有取得任何即時行情（可能是 TWSE MIS API 異常或被阻擋）"
+            print(error_msg)
+            send_telegram_message(f"🚨 **【系統警報】**\n{error_msg}")
+            return strategy_1_results
 
         realtime_completeness = (
             len(realtime_data)
@@ -1258,20 +1182,12 @@ def scan_taiwan_stocks():
             f"({realtime_completeness:.1%})"
         )
 
-        if (
-            realtime_completeness
-            < 0.60
-        ):
+        if realtime_completeness < 0.60:
 
-            print(
-                "❌ 即時資料完整度過低，"
-                "本次停止，避免誤報無符合標的。"
-            )
-
-            return (
-                strategy_1_results,
-                strategy_2_results,
-            )
+            error_msg = f"❌ 掃描失敗：即時資料完整度過低 ({realtime_completeness:.1%})"
+            print(error_msg)
+            send_telegram_message(f"🚨 **【系統警報】**\n{error_msg}")
+            return strategy_1_results
 
         candidates = (
             filter_volume_candidates(
@@ -1286,18 +1202,13 @@ def scan_taiwan_stocks():
                 ">= 5,000 張候選股。"
             )
 
-            return (
-                strategy_1_results,
-                strategy_2_results,
-            )
+            return strategy_1_results
 
         candidate_tickers = []
 
         for code in candidates:
 
-            symbol = (
-                ticker_map.get(code)
-            )
+            symbol = ticker_map.get(code)
 
             if symbol:
 
@@ -1316,30 +1227,21 @@ def scan_taiwan_stocks():
             or df_all.empty
         ):
 
-            print(
-                "❌ 候選股歷史資料不足，"
-                "停止策略運算。"
-            )
-
-            return (
-                strategy_1_results,
-                strategy_2_results,
-            )
+            error_msg = "❌ 掃描失敗：候選股歷史資料不足，無法進行策略運算。"
+            print(error_msg)
+            send_telegram_message(f"🚨 **【系統警報】**\n{error_msg}")
+            return strategy_1_results
 
         print(
             f"開始計算 "
             f"{len(candidates)} 檔候選股..."
         )
 
-        for code, realtime in (
-            candidates.items()
-        ):
+        for code, realtime in candidates.items():
 
             try:
 
-                symbol = (
-                    ticker_map.get(code)
-                )
+                symbol = ticker_map.get(code)
 
                 if not symbol:
                     continue
@@ -1352,14 +1254,13 @@ def scan_taiwan_stocks():
                     realtime["volume"]
                 )
 
-                current_open = (
-                    realtime.get("open")
+                current_open = realtime.get(
+                    "open"
                 )
 
                 if (
                     current_price <= 0
-                    or current_volume
-                    < MIN_VOLUME_LOTS
+                    or current_volume < MIN_VOLUME_LOTS
                 ):
 
                     continue
@@ -1374,71 +1275,12 @@ def scan_taiwan_stocks():
                 )
 
                 if df is None:
-
-                    print(
-                        f"{code}："
-                        "沒有有效歷史資料"
-                    )
-
                     continue
 
                 if len(df) < 15:
                     continue
 
                 yesterday = df.iloc[-1]
-
-                day_before = (
-                    df.iloc[-2]
-                )
-
-                three_days_ago = (
-                    df.iloc[-3]
-                )
-
-                df["10MA"] = (
-                    df["Close"]
-                    .rolling(
-                        window=10
-                    )
-                    .mean()
-                )
-
-                yesterday_10ma = float(
-                    df["10MA"].iloc[-1]
-                )
-
-                day_before_10ma = float(
-                    df["10MA"].iloc[-2]
-                )
-
-                three_days_ago_10ma = float(
-                    df["10MA"].iloc[-3]
-                )
-
-                vol_yesterday = (
-                    float(
-                        yesterday["Volume"]
-                    )
-                    / 1000
-                )
-
-                if (
-                    vol_yesterday <= 0
-                ):
-
-                    continue
-
-                volume_ratio = (
-                    current_volume
-                    / vol_yesterday
-                )
-
-                if (
-                    volume_ratio
-                    < MIN_TODAY_VOLUME_RATIO
-                ):
-
-                    continue
 
                 close_yesterday = float(
                     yesterday["Close"]
@@ -1448,27 +1290,79 @@ def scan_taiwan_stocks():
                     yesterday["Open"]
                 )
 
+                high_yesterday = float(
+                    yesterday["High"]
+                )
+
+                low_yesterday = float(
+                    yesterday["Low"]
+                )
+
+                yesterday_volume = float(
+                    yesterday["Volume"]
+                )
+
                 if (
                     close_yesterday <= 0
+                    or open_yesterday <= 0
+                    or yesterday_volume <= 0
                 ):
 
                     continue
 
-                change_pct = round(
-                    (
-                        (
-                            current_price
-                            - close_yesterday
-                        )
-                        / close_yesterday
-                    )
-                    * 100,
-                    2,
+                vol_yesterday_lots = (
+                    yesterday_volume / 1000
                 )
 
-                stock_info = stocks.get(
-                    code
+                if vol_yesterday_lots <= 0:
+                    continue
+
+                time_weight = 270.0 / 225.0
+                estimated_full_day_volume = current_volume * time_weight
+                volume_ratio = estimated_full_day_volume / vol_yesterday_lots
+
+                if (
+                    volume_ratio
+                    < MIN_TODAY_VOLUME_RATIO
+                ):
+
+                    continue
+
+                change_pct = (
+                    (
+                        current_price
+                        - close_yesterday
+                    )
+                    / close_yesterday
+                ) * 100
+
+                # -----------------------------------------
+                # 策略核心：陽包陰 + 量能增加
+                # -----------------------------------------
+
+                # 1. 昨天必須是黑 K（收盤 < 開盤）
+                yesterday_is_bearish = close_yesterday < open_yesterday
+                if not yesterday_is_bearish:
+                    continue
+
+                # 2. 今天盤中必須是紅 K（現價 > 開盤）
+                current_is_bullish = current_open is not None and current_price > current_open
+                if not current_is_bullish:
+                    continue
+
+                # 3. 陽包陰核心條件：今天開盤 <= 昨天收盤，且今天現價 >= 昨天開盤
+                is_bullish_engulfing = (
+                    current_open is not None
+                    and current_open <= close_yesterday
+                    and current_price >= open_yesterday
                 )
+
+                if not is_bullish_engulfing:
+                    continue
+
+                signal_type = "🔥 陽包陰"
+
+                stock_info = stocks.get(code)
 
                 stock_name = (
                     stock_info.name
@@ -1487,134 +1381,55 @@ def scan_taiwan_stocks():
 
                 suffix = (
                     ".TW"
-                    if symbol.endswith(
-                        ".TW"
-                    )
+                    if symbol.endswith(".TW")
                     else ".TWO"
                 )
 
-                if current_open is not None:
-
-                    yesterday_is_bearish = (
-                        close_yesterday
-                        < open_yesterday
-                    )
-
-                    current_is_bullish = (
-                        current_price
-                        > current_open
-                    )
-
-                    bullish_engulfing = (
-                        yesterday_is_bearish
-                        and current_is_bullish
-                        and (
-                            current_open
-                            <= close_yesterday
-                        )
-                        and (
-                            current_price
-                            >= open_yesterday
-                        )
-                    )
-
-                    if bullish_engulfing:
-
-                        strategy_1_results.append(
-                            {
-                                "code": code,
-                                "name": stock_name,
-                                "group": stock_group,
-                                "price": round(
-                                    current_price,
-                                    2,
-                                ),
-                                "change": change_pct,
-                                "vol": (
-                                    f"{int(current_volume):,}"
-                                    "張"
-                                ),
-                                "mult": (
-                                    f"{volume_ratio:.1f}"
-                                    "倍昨日量"
-                                ),
-                                "suffix": suffix,
-                            }
-                        )
-
-                recent_below_10ma = (
+                yesterday_body_pct = (
                     (
-                        float(
-                            yesterday["Close"]
-                        )
-                        < yesterday_10ma
+                        open_yesterday
+                        - close_yesterday
                     )
-                    or
-                    (
-                        float(
-                            day_before["Close"]
-                        )
-                        < day_before_10ma
-                    )
-                    or
-                    (
-                        float(
-                            three_days_ago["Close"]
-                        )
-                        < three_days_ago_10ma
-                    )
+                    / open_yesterday
+                ) * 100
+
+                strategy_1_results.append(
+                    {
+                        "code": code,
+                        "name": stock_name,
+                        "group": stock_group,
+                        "price": round(
+                            current_price,
+                            2,
+                        ),
+                        "change": round(
+                            change_pct,
+                            2,
+                        ),
+                        "vol": (
+                            f"{int(current_volume):,}"
+                            "張"
+                        ),
+                        "mult": (
+                            f"{volume_ratio:.1f}"
+                            "倍昨日量"
+                        ),
+                        "signal": signal_type,
+                        "suffix": suffix,
+                        "yesterday_open": round(
+                            open_yesterday,
+                            2,
+                        ),
+                        "yesterday_close": round(
+                            close_yesterday,
+                            2,
+                        ),
+                        "body": round(
+                            yesterday_body_pct,
+                            2,
+                        ),
+                    }
                 )
-
-                if not recent_below_10ma:
-
-                    continue
-
-                previous_9_closes = (
-                    df["Close"]
-                    .iloc[-9:]
-                    .astype(float)
-                    .tolist()
-                )
-
-                current_10ma = (
-                    sum(
-                        previous_9_closes
-                    )
-                    + current_price
-                ) / 10
-
-                reclaimed_10ma = (
-                    current_price
-                    > current_10ma
-                )
-
-                if reclaimed_10ma:
-
-                    strategy_2_results.append(
-                        {
-                            "code": code,
-                            "name": stock_name,
-                            "group": stock_group,
-                            "price": round(
-                                current_price,
-                                2,
-                            ),
-                            "change": change_pct,
-                            "vol": (
-                                f"{int(current_volume):,}"
-                                "張"
-                            ),
-                            "mult": (
-                                f"{volume_ratio:.1f}"
-                                "倍昨日量"
-                            ),
-                            "ma10": round(
-                                current_10ma,
-                                2,
-                            ),
-                            "suffix": suffix,
-                        }
-                    )
 
             except Exception as e:
 
@@ -1625,6 +1440,14 @@ def scan_taiwan_stocks():
                 )
 
                 continue
+
+        strategy_1_results.sort(
+            key=lambda x: (
+                x["change"],
+                x["mult"],
+            ),
+            reverse=True,
+        )
 
         elapsed = (
             time.time()
@@ -1641,13 +1464,8 @@ def scan_taiwan_stocks():
         )
 
         print(
-            f"策略一："
+            f"符合條件："
             f"{len(strategy_1_results)} 檔"
-        )
-
-        print(
-            f"策略二："
-            f"{len(strategy_2_results)} 檔"
         )
 
         print(
@@ -1656,14 +1474,11 @@ def scan_taiwan_stocks():
 
     except Exception as e:
 
-        print(
-            f"全台股掃描錯誤：{e}"
-        )
+        err_msg = f"全台股掃描發生未預期錯誤：{e}"
+        print(err_msg)
+        send_telegram_message(f"🚨 **【系統異常警報】**\n{err_msg}")
 
-    return (
-        strategy_1_results,
-        strategy_2_results,
-    )
+    return strategy_1_results
 
 
 # =========================================================
@@ -1683,9 +1498,8 @@ def build_message(
 
     message = (
         f"🤖 **【{title}】(12:45 盤中)**\n"
-        f"全台股即時掃描 "
-        f"({now_text})\n"
-        f"條件：成交量 ≥ 5,000 張\n\n"
+        f"即時掃描時間：{now_text}\n"
+        f"條件：成交量 ≥ 5,000 張 (含時間權重估算)\n\n"
     )
 
     if results:
@@ -1707,24 +1521,15 @@ def build_message(
                 f"• [{item['code']} "
                 f"{item['name']}]"
                 f"({link}) | "
-                f"{item['group']} | "
+                f"{item['signal']} | "
                 f"{item['price']} "
                 f"({item['change']:+.2f}%) | "
                 f"量 {item['vol']} "
-                f"({item['mult']})"
+                f"({item['mult']})\n"
             )
 
-            if "ma10" in item:
-
-                message += (
-                    f" | 10MA "
-                    f"{item['ma10']}"
-                )
-
-            message += "\n"
-
         message += (
-            "\n⚠️ TWSE / TPEx 盤中即時訊號"
+            "\n⚠️ TWSE / TPEx 12:45 盤中訊號"
             "\n⚠️ 尚未收盤"
         )
 
@@ -1789,23 +1594,12 @@ def job():
 
         return
 
-    s1_results, s2_results = (
-        scan_taiwan_stocks()
-    )
+    s1_results = scan_taiwan_stocks()
 
     send_telegram_message(
         build_message(
-            "策略一：出量陽包線",
+            "陽包陰量能增加掃描",
             s1_results,
-        )
-    )
-
-    time.sleep(1.0)
-
-    send_telegram_message(
-        build_message(
-            "策略二：跌破3日內站回10MA",
-            s2_results,
         )
     )
 
